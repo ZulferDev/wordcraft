@@ -1,0 +1,59 @@
+version: 2.1
+
+jobs:
+  build-wordcraft-cli:
+    docker:
+      # Image resmi Rust 1.95 di atas Debian 11 (bullseye) x86_64
+      - image: rust:1.95-bullseye
+
+    steps:
+      - checkout
+
+      # Debian 11 sudah EOL; arahkan apt ke archive agar apt-get update tidak gagal
+      - run:
+          name: Fix apt sources for Debian 11 (EOL)
+          command: |
+            sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list
+            sed -i '/bullseye-updates/d' /etc/apt/sources.list
+            echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+            apt-get update
+
+      - run:
+          name: Install system dependencies
+          command: |
+            apt-get install -y --no-install-recommends \
+              pkg-config \
+              libssl-dev \
+              ca-certificates
+
+      - restore_cache:
+          keys:
+            - v1-wordcraft-cargo-{{ checksum "Cargo.lock" }}
+            - v1-wordcraft-cargo-
+
+      - run:
+          name: Build wordcraft-cli (release)
+          command: |
+            cargo build --release --locked -p wordcraft-cli
+
+      - save_cache:
+          key: v1-wordcraft-cargo-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+            - target
+
+      - run:
+          name: Verify binary
+          command: |
+            file target/release/wordcraft-cli
+            ldd target/release/wordcraft-cli || true
+
+      - store_artifacts:
+          path: target/release/wordcraft-cli
+          destination: wordcraft-cli-linux-x86_64-bullseye
+
+workflows:
+  build:
+    jobs:
+      - build-wordcraft-cli
