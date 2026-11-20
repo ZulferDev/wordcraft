@@ -1,15 +1,17 @@
 version: 2.1
 
 jobs:
-  build-wordcraft-cli:
+  build-wordcraft-desktop-bullseye:
     docker:
-      # Image resmi Rust 1.95 di atas Debian 11 (bullseye) x86_64
+      # Image Rust 1.95 berbasis Debian 11 (bullseye) x86_64
       - image: rust:1.95-bullseye
+
+    resource_class: large   # desktop build butuh RAM lebih; bisa medium jika cukup
 
     steps:
       - checkout
 
-      # Debian 11 sudah EOL; arahkan apt ke archive agar apt-get update tidak gagal
+      # Debian 11 sudah EOL; arahkan apt ke archive.debian.org
       - run:
           name: Fix apt sources for Debian 11 (EOL)
           command: |
@@ -19,41 +21,70 @@ jobs:
             apt-get update
 
       - run:
-          name: Install system dependencies
+          name: Install desktop GUI dependencies
           command: |
             apt-get install -y --no-install-recommends \
               pkg-config \
               libssl-dev \
-              ca-certificates
+              ca-certificates \
+              libxkbcommon-dev \
+              libwayland-dev \
+              libx11-dev \
+              libxcursor-dev \
+              libxrandr-dev \
+              libxi-dev \
+              libgl1-mesa-dev \
+              libegl1-mesa-dev \
+              libfontconfig1-dev \
+              libfreetype6-dev
 
+      # Cache Cargo agar build berikutnya lebih cepat
       - restore_cache:
           keys:
-            - v1-wordcraft-cargo-{{ checksum "Cargo.lock" }}
-            - v1-wordcraft-cargo-
+            - v1-wordcraft-desktop-bullseye-{{ checksum "Cargo.lock" }}
+            - v1-wordcraft-desktop-bullseye-
 
       - run:
-          name: Build wordcraft-cli (release)
+          name: Build wordcraft desktop (release, native bullseye)
           command: |
-            cargo build --release --locked -p wordcraft-cli
+            # Cek versi glibc di lingkungan build — harus 2.31
+            ldd --version | head -n1
+            cargo build --release --locked -p wordcraft
 
       - save_cache:
-          key: v1-wordcraft-cargo-{{ checksum "Cargo.lock" }}
+          key: v1-wordcraft-desktop-bullseye-{{ checksum "Cargo.lock" }}
           paths:
             - ~/.cargo/registry
             - ~/.cargo/git
             - target
 
+      # Verifikasi bahwa binary hanya butuh GLIBC <= 2.31
       - run:
-          name: Verify binary
+          name: Verify glibc requirements
           command: |
-            file target/release/wordcraft-cli
-            ldd target/release/wordcraft-cli || true
+            echo "=== Binary info ==="
+            file target/release/wordcraft
+            echo ""
+            echo "=== GLIBC symbols yang dibutuhkan ==="
+            objdump -T target/release/wordcraft | grep -o 'GLIBC_[0-9.]*' | sort -uV
+            echo ""
+            echo "=== Cek: tidak boleh ada GLIBC > 2.31 ==="
+            if objdump -T target/release/wordcraft \
+               | grep -o 'GLIBC_[0-9.]*' \
+               | sort -uV \
+               | tail -n1 \
+               | awk -F_ '{ if ($2 > "2.31") exit 1 }'; then
+              echo "OK: kompatibel dengan Debian 11 (glibc 2.31)"
+            else
+              echo "WARNING: binary membutuhkan glibc > 2.31"
+              exit 1
+            fi
 
       - store_artifacts:
-          path: target/release/wordcraft-cli
-          destination: wordcraft-cli-linux-x86_64-bullseye
+          path: target/release/wordcraft
+          destination: wordcraft-desktop-linux-x86_64-bullseye
 
 workflows:
   build:
     jobs:
-      - build-wordcraft-cli
+      - build-wordcraft-desktop-bullseye
